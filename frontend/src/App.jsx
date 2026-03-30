@@ -4,8 +4,9 @@ import Orb3D from './components/Orb3D.jsx';
 import './index.css';
 
 // API Configuration from environment variables
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
-const API_KEY = import.meta.env.VITE_API_KEY || '';
+// API Configuration - Centralized in api.php
+const API_BASE_URL = '/api.php';
+const API_KEY = ''; // Handled by backend logic if needed
 
 import { 
   IconEye, IconCamera, IconMonitor, IconGlobe, 
@@ -101,18 +102,17 @@ function App() {
     try {
       const options = { 
         method: 'POST', 
-        headers: { 'x-api-key': API_KEY }, 
+        headers: { 'Content-Type': 'application/json' }, 
         body: payload 
       };
-      if (isJson) options.headers['Content-Type'] = 'application/json';
-      const fullUrl = `${API_BASE_URL}${endpoint}`;
+      const fullUrl = `${API_BASE_URL}?action=chat`;
       const res = await fetch(fullUrl, options);
       if (!res.ok) throw new Error("HTTP " + res.status);
       const data = await res.json();
       
       if (data.vision_url) setVisionImage(data.vision_url);
 
-      const responseText = data.response || data.error || data.transcript || '';
+      const responseText = data.content || data.response || data.error || '';
       
       // Intercept __VISION_REQUEST__ markers from the backend
       if (responseText.startsWith('__VISION_REQUEST__:')) {
@@ -127,7 +127,19 @@ function App() {
       }
 
       setTranscript({ type: 'bot', text: responseText });
-      handleAudioPlayback(data.audio_url);
+      
+      // Automatic TTS if response is received
+      if (responseText) {
+        const ttsRes = await fetch(`${API_BASE_URL}?action=tts`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: responseText })
+        });
+        const ttsData = await ttsRes.json();
+        if (ttsData.audio) {
+          handleAudioPlayback(`data:audio/mp3;base64,${ttsData.audio}`);
+        }
+      }
     } catch (err) {
       setOrbState('error');
       setTranscript({ type: 'error', text: `Error: ${err.message}` });
@@ -244,10 +256,10 @@ function App() {
   // ═══ Send captured image to backend for AI analysis ═══
   const sendVisionToBackend = async (base64Image, source) => {
     try {
-      const res = await fetch(`${API_BASE_URL}/vision-analyze`, {
+      const res = await fetch(`${API_BASE_URL}?action=vision`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-api-key': API_KEY },
-        body: JSON.stringify({ image: base64Image, source })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: base64Image, prompt: '¿Qué ves en esta imagen? Responde en español.', source })
       });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
@@ -275,7 +287,13 @@ function App() {
     setTranscript({ type: 'user', text });
     setUserInput('');
     setShowTools(false);
-    setTimeout(() => sendCommand('/text-command', JSON.stringify({ text })), 400);
+    
+    // Format messages for api.php chat action
+    const messages = [
+      { role: 'user', content: text }
+    ];
+    
+    setTimeout(() => sendCommand('?action=chat', JSON.stringify({ messages, provider: 'gemini' })), 400);
   };
 
   const clearMemory = async () => {
@@ -307,11 +325,28 @@ function App() {
           setTranscript({ type: 'system', text: '◈ PROCESANDO AUDIO...' });
           setVisionImage(null);
           
-          const type = navigator.userAgent.includes('Safari') && !navigator.userAgent.includes('Chrome') ? 'audio/mp4' : 'audio/wav';
+          const type = navigator.userAgent.includes('Safari') && !navigator.userAgent.includes('Chrome') ? 'audio/mp4' : 'audio/webm';
           const audioBlob = new Blob(chunksRef.current, { type });
-          const formData = new FormData();
-          formData.append('audio_file', audioBlob); // Backend expects 'audio_file' due to routes.py
-          await sendCommand('/voice-command', formData, false);
+          
+          // Step 1: STT
+          const reader = new FileReader();
+          reader.onloadend = async () => {
+            const base64Audio = reader.result.split(',')[1];
+            const sttRes = await fetch(`${API_BASE_URL}?action=stt`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ audio: base64Audio })
+            });
+            const sttData = await sttRes.json();
+            if (sttData.text) {
+              handleTextInput(sttData.text);
+            } else {
+              setOrbState('error');
+              setTranscript({ type: 'error', text: 'No se pudo transcribir el audio.' });
+            }
+          };
+          reader.readAsDataURL(audioBlob);
+          
           stream.getTracks().forEach(track => track.stop());
         };
 
