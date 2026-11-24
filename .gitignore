@@ -49,3 +49,9 @@ Thumbs.db
 *.swp
 *.swo
 frontend/.env
+
+# Runtime SQLite memory (never commit conversation history)
+/iaputa_os_memory.db
+/iaputa_os_memory.db-journal
+/iaputa_os_memory.db-wal
+/iaputa_os_memory.db-shm
