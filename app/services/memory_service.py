@@ -1,6 +1,9 @@
+import os
 import sqlite3
+from pathlib import Path
 
-DB_PATH = "iaputa_os_memory.db"
+DB_PATH = os.environ.get("IAPUTA_MEMORY_DB_PATH", "iaputa_os_memory.db")
+Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
